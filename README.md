@@ -2,6 +2,8 @@
 
 Nightdeck is a small native Windows player for BluOS. Version 1.0.0. It speaks the same HTTP API as [bluplay](https://github.com/fredrikspang-sys/bluplay) 0.3.1 on port 11000: long-poll `/Status`, library browse, queue, playlists, presets, grouping, and the sleep timer.
 
+The goal is a small footprint and simplicity. The exe is about 376 KB, and the release zip is about 157 KB. It needs the .NET 9 Desktop Runtime. There is no telemetry and no account. It talks to the player on the local network. Streaming services are not supported. Nightdeck browses and plays the player's local library.
+
 Nightdeck is not affiliated with BluOS, Lenbrook, or Bluesound.
 
 ## Download
