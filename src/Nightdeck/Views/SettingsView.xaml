@@ -37,6 +37,47 @@
         <TextBox x:Name="DbBox" Width="120" HorizontalAlignment="Left" Margin="0,4,0,12"/>
 
         <Button Content="Save" Click="Save_Click" HorizontalAlignment="Left"/>
+
+        <TextBlock Text="Music library" FontWeight="SemiBold" Margin="0,24,0,4"/>
+        <TextBlock Text="Network shares the player indexes. Changes are made on the player." Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap" Margin="0,0,0,8"/>
+        <ListBox x:Name="SharesList" MaxHeight="180" Margin="0,0,0,8" AutomationProperties.Name="Network shares">
+          <ListBox.ItemTemplate>
+            <DataTemplate>
+              <CheckBox IsChecked="{Binding Selected, Mode=TwoWay}" ToolTip="{Binding Label}" AutomationProperties.Name="{Binding Path}">
+                <TextBlock Text="{Binding Path}" FontFamily="Consolas" TextTrimming="CharacterEllipsis"/>
+              </CheckBox>
+            </DataTemplate>
+          </ListBox.ItemTemplate>
+        </ListBox>
+        <TextBlock x:Name="SharesEmpty" Text="No network shares" Foreground="{StaticResource MutedBrush}" Margin="0,0,0,8" Visibility="Collapsed"/>
+        <WrapPanel Orientation="Horizontal" Margin="0,0,0,8">
+          <Button x:Name="RefreshSharesBtn" Content="Refresh" Click="RefreshShares_Click" Margin="0,0,8,4"/>
+          <Button x:Name="RemoveSharesBtn" Content="Remove selected…" Click="RemoveShares_Click" Margin="0,0,8,4"/>
+          <Button x:Name="AddShareBtn" Content="Add share…" Click="AddShare_Click" Margin="0,0,8,4"/>
+          <Button x:Name="ReindexBtn" Content="Reindex library…" Click="Reindex_Click" Margin="0,0,8,4"/>
+        </WrapPanel>
+        <StackPanel x:Name="IndexingPanel" Orientation="Horizontal" Margin="0,0,0,8" Visibility="Collapsed">
+          <ProgressBar IsIndeterminate="True" Width="80" Height="4" VerticalAlignment="Center" Foreground="{StaticResource AccentBrush}" Background="{StaticResource Surface2Brush}" BorderThickness="0"/>
+          <TextBlock Text="Indexing library…" Margin="8,0,0,0" VerticalAlignment="Center"/>
+        </StackPanel>
+        <Border x:Name="AddPanel" Visibility="Collapsed" BorderBrush="{StaticResource LineBrush}" BorderThickness="1" CornerRadius="4" Padding="12" Margin="0,0,0,8">
+          <StackPanel>
+            <TextBlock Text="Share (\\server\share)" Foreground="{StaticResource MutedBrush}"/>
+            <TextBox x:Name="SharePathBox" Margin="0,4,0,8" FontFamily="Consolas" AutomationProperties.Name="Share path"/>
+            <TextBlock Text="User name (if required)" Foreground="{StaticResource MutedBrush}"/>
+            <TextBox x:Name="ShareUserBox" Margin="0,4,0,8" AutomationProperties.Name="Share user name"/>
+            <TextBlock Text="Password (if required)" Foreground="{StaticResource MutedBrush}"/>
+            <PasswordBox x:Name="SharePassBox" Margin="0,4,0,8" AutomationProperties.Name="Share password"/>
+            <TextBlock x:Name="AddError" Foreground="{StaticResource AccentBrush}" TextWrapping="Wrap" Visibility="Collapsed" Margin="0,0,0,8"/>
+            <StackPanel Orientation="Horizontal">
+              <Button x:Name="AddConfirmBtn" Content="Add" Click="AddConfirm_Click" Margin="0,0,8,0"/>
+              <Button Content="Cancel" Click="AddCancel_Click"/>
+            </StackPanel>
+          </StackPanel>
+        </Border>
+        <TextBlock x:Name="SharesInfo" Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap" Margin="0,0,0,8"/>
+        <TextBlock Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap" FontSize="12" Margin="0,0,0,12"
+                   Text="BluOS sends share passwords unencrypted on your local network. Nightdeck does not store them, and the player never sends them back, so to change a login remove the share and add it again."/>
       </StackPanel>
     </ScrollViewer>
   </DockPanel>

@@ -1,5 +1,7 @@
 using System.Net;
+using System.Net.Http.Headers;
 using System.Text;
+using System.Text.RegularExpressions;
 
 namespace Nightdeck.Core;
 
@@ -7,6 +9,8 @@ public sealed class BluOsClient : IBluOsClient
 {
     readonly HttpClient _http;
     readonly SocketsHttpHandler _handler;
+    readonly HttpClient _settingsHttp;
+    readonly SocketsHttpHandler _settingsHandler;
 
     public BluOsClient(string host, int port)
     {
@@ -17,6 +21,15 @@ public sealed class BluOsClient : IBluOsClient
         };
         _http = new HttpClient(_handler) { Timeout = Timeout.InfiniteTimeSpan };
         _http.DefaultRequestHeaders.UserAgent.ParseAdd("Nightdeck/1.0.0");
+        // Settings pages and share forms: redirects are handled by hand so a POST is never turned into a GET.
+        _settingsHandler = new SocketsHttpHandler
+        {
+            ConnectTimeout = TimeSpan.FromSeconds(5),
+            PooledConnectionLifetime = TimeSpan.FromMinutes(2),
+            AllowAutoRedirect = false,
+        };
+        _settingsHttp = new HttpClient(_settingsHandler) { Timeout = Timeout.InfiniteTimeSpan };
+        _settingsHttp.DefaultRequestHeaders.UserAgent.ParseAdd("Nightdeck/1.0.0");
         SetEndpoint(host, port);
     }
 
@@ -34,6 +47,8 @@ public sealed class BluOsClient : IBluOsClient
     {
         _http.Dispose();
         _handler.Dispose();
+        _settingsHttp.Dispose();
+        _settingsHandler.Dispose();
         await Task.CompletedTask;
     }
 
@@ -130,6 +145,139 @@ public sealed class BluOsClient : IBluOsClient
 
     public Task RemoveSlaveAsync(string host, int port, CancellationToken ct = default)
         => Slave("/RemoveSlave", host, port, ct);
+
+    public Task ReindexAsync(CancellationToken ct = default) => Send("/Reindex", ct);
+
+    public async Task<SharesPage> GetNetworkSharesAsync(CancellationToken ct = default)
+    {
+        var (xml, port) = await SettingsCall("/Settings?id=networkShares", Port, null, ct).ConfigureAwait(false);
+        return ShareXml.ParseSharesPage(xml, port);
+    }
+
+    public async Task<AddShareForm> GetAddShareFormAsync(CancellationToken ct = default)
+    {
+        var (xml, port) = await SettingsCall("/Settings?id=addShare", Port, null, ct).ConfigureAwait(false);
+        return ShareXml.ParseAddShareForm(xml, port);
+    }
+
+    public async Task AddNetworkShareAsync(AddShareForm form, string sharePath, string user, string password, CancellationToken ct = default)
+    {
+        string path = form.Normalize(sharePath) ?? throw new BluOsException(form.PatternError);
+        string body = ShareXml.FormBody(
+        [
+            new(form.ShareField, path),
+            new(form.UserField, user ?? ""),
+            new(form.PasswordField, password ?? ""),
+        ]);
+        // /Settings is served on the settings port (11000 answers 301 to 11001), but the add form's relative URL
+        // (/cp/AddShare) is handled on the API port: a NAD C390 (BluOS 4.18) answers 404 for it on 11001.
+        await SettingsCall(form.Url, Port, body, ct).ConfigureAwait(false);
+    }
+
+    public async Task RemoveNetworkSharesAsync(SharesPage page, IEnumerable<string> sharePaths, CancellationToken ct = default)
+    {
+        var pairs = sharePaths.Where(p => p.Length > 0).Distinct(StringComparer.Ordinal).Select(p => new KeyValuePair<string, string>(p, "on")).ToList();
+        if (pairs.Count == 0) throw new BluOsException("no share selected");
+        pairs.Add(new(page.RemoveName, page.RemoveValue));
+        await SettingsCall(page.RemoveAction, page.SettingsPort > 0 ? page.SettingsPort : Port, ShareXml.FormBody(pairs), ct).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// GET (form null) or POST form-urlencoded to a settings URL. Requests only go to this player's host;
+    /// a URL naming another host keeps its port and path but is sent to the player. Redirects are followed
+    /// by hand (max 4): a POST is re-sent on 307/308, and on 301/302/303 only when the path stays the same
+    /// (a port move such as 11000 -> 11001); a redirect to another path after a POST is the form's done
+    /// page and is not fetched. A reply holding &lt;error&gt; throws. The body is never logged or put in
+    /// an exception message.
+    /// </summary>
+    async Task<(string Xml, int Port)> SettingsCall(string url, int defaultPort, string? form, CancellationToken ct)
+    {
+        Uri target = PlayerUri(url, defaultPort);
+        byte[]? payload = form == null ? null : Encoding.UTF8.GetBytes(form);
+        try
+        {
+            for (int hop = 0; ; hop++)
+            {
+                using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+                using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct, timeout.Token);
+                try
+                {
+                    using var req = new HttpRequestMessage(payload == null ? HttpMethod.Get : HttpMethod.Post, target);
+                    if (payload != null)
+                    {
+                        req.Content = new ByteArrayContent(payload);
+                        req.Content.Headers.ContentType = new MediaTypeHeaderValue("application/x-www-form-urlencoded");
+                    }
+                    using var resp = await _settingsHttp.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, linked.Token).ConfigureAwait(false);
+                    int code = (int)resp.StatusCode;
+                    if (code is >= 300 and < 400 && resp.Headers.Location != null)
+                    {
+                        if (hop >= 4) throw new BluOsException("too many redirects from the player");
+                        Uri next = PlayerUri(new Uri(target, resp.Headers.Location).AbsoluteUri, target.Port);
+                        if (payload != null && code is not (307 or 308) && next.PathAndQuery != target.PathAndQuery)
+                            return ("", target.Port);
+                        target = next;
+                        continue;
+                    }
+                    await using var stream = await resp.Content.ReadAsStreamAsync(linked.Token).ConfigureAwait(false);
+                    var ms = new MemoryStream();
+                    var buf = new byte[8192];
+                    while (true)
+                    {
+                        int n = await stream.ReadAsync(buf, linked.Token).ConfigureAwait(false);
+                        if (n == 0) break;
+                        if (ms.Length + n > 4_000_000) throw new BluOsException("response from player too large");
+                        ms.Write(buf, 0, n);
+                    }
+                    string xml = BluOsXml.Decode(ms.ToArray());
+                    string? detail = xml.Contains("<error", StringComparison.Ordinal) ? ErrorText(xml) : null;
+                    if (detail != null) throw new BluOsException(detail);
+                    if (code >= 400) throw new BluOsException("HTTP Error " + code);
+                    return (xml, target.Port);
+                }
+                catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+                catch (OperationCanceledException) { throw new BluOsException("timeout"); }
+                catch (BluOsException) { throw; }
+                catch (Exception ex) { throw new BluOsException(ex.Message); }
+            }
+        }
+        finally
+        {
+            if (payload != null) Array.Clear(payload);
+        }
+    }
+
+    static string ErrorText(string xml)
+    {
+        string? detail = BluOsXml.ErrorDetail(xml);
+        if (string.IsNullOrWhiteSpace(detail))
+        {
+            var m = Regex.Match(xml, "<error[^>]*>(.*?)</error>", RegexOptions.Singleline);
+            detail = m.Success ? WebUtility.HtmlDecode(Regex.Replace(m.Groups[1].Value, "<[^>]*>", " ")).Trim() : "";
+        }
+        return detail.Length == 0 ? "error" : detail;
+    }
+
+    /// <summary>"/path" (on <paramref name="defaultPort"/>) or "http://host[:port]/path", always aimed at this player's host.</summary>
+    Uri PlayerUri(string url, int defaultPort)
+    {
+        url = (url ?? "").Trim();
+        int port = defaultPort;
+        string pathAndQuery;
+        if (url.StartsWith('/')) pathAndQuery = url;
+        else if (Uri.TryCreate(url, UriKind.Absolute, out var abs) && abs.Scheme == Uri.UriSchemeHttp)
+        {
+            port = abs.Port;
+            pathAndQuery = abs.PathAndQuery;
+        }
+        else throw new BluOsException("unexpected URL from the player");
+        if (port is < 1 or > 65535) port = Port;
+        var b = new UriBuilder("http", Host, port);
+        int q = pathAndQuery.IndexOf('?');
+        if (q < 0) b.Path = pathAndQuery;
+        else { b.Path = pathAndQuery[..q]; b.Query = pathAndQuery[(q + 1)..]; }
+        return b.Uri;
+    }
 
     async Task<int> Add(BrowseItem item, bool playNow, int depth, Counter nodes, CancellationToken ct)
     {

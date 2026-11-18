@@ -5,7 +5,14 @@ using System.Text;
 
 namespace Nightdeck.Mock;
 
-/// <summary>Loopback BluOS stand-in for tests. Long-polls block until the state changes.</summary>
+/// <summary>
+/// Loopback BluOS stand-in for tests. Long-polls block until the state changes.
+/// Network shares are shaped like a NAD C390 (BluOS 4.18) with invented addresses: /Settings on
+/// <see cref="Port"/> answers 301 to <see cref="SettingsPort"/> (like 11000 -&gt; 11001), which serves
+/// Settings?id=networkShares|addShare|library; POST /cp/AddShare is handled on <see cref="Port"/> (the real player gives 404 for it on 11001) and its errors are &lt;error&gt;&lt;message&gt;; <see cref="WebPort"/> stands in for the
+/// player's port 80 and takes POST /findremoveshares (answers 302 to /sharecfg). Request paths are recorded
+/// (POSTs as "POST /path"), bodies never; of a password only its length is kept.
+/// </summary>
 public sealed class MockPlayer : IDisposable
 {
     public const string LibraryRoot = "LocalMusic:";
@@ -29,8 +36,10 @@ public sealed class MockPlayer : IDisposable
     readonly List<(string Id, int Port)> _slaves = [];
     readonly List<Song> _queue = [];
     readonly Dictionary<string, List<Song>> _saved = new(StringComparer.Ordinal);
-    HttpListener? _listener;
-    Task? _loop;
+    readonly List<string> _shares = [@"\\10.0.0.5\Media\Music", @"\\nas.example\Rock & Roll"];
+    HttpListener? _listener, _settingsListener, _webListener;
+    Task? _loop, _settingsLoop, _webLoop;
+    DateTime _indexUntil;
     bool _stop;
     string _state = "play";
     int _volume = 40;
@@ -47,6 +56,21 @@ public sealed class MockPlayer : IDisposable
     public string BaseUrl => "http://127.0.0.1:" + Port + "/";
     public string Name { get; set; } = "Mock";
     public bool FailGroup { get; set; }
+    public int SettingsPort { get; private set; }
+    public int WebPort { get; private set; }
+    /// <summary>The next POST /cp/AddShare answers 307 to /cp/AddShare2 (which adds).</summary>
+    public bool RedirectNextAdd { get; set; }
+    /// <summary>The next POST /cp/AddShare fails like a share the player cannot mount ("Addshare failed").</summary>
+    public bool FailNextAdd { get; set; }
+    public string LastShareUser { get; private set; } = "";
+    public int LastSharePasswordLength { get; private set; } = -1;
+    public bool LastShareContentTypeOk { get; private set; }
+    /// <summary>How long /Reindex keeps &lt;indexing&gt;1 in /Status.</summary>
+    public TimeSpan IndexDuration { get; set; } = TimeSpan.FromSeconds(1.5);
+
+    public IReadOnlyList<string> Paths { get { lock (_gate) return _paths.ToList(); } }
+    public IReadOnlyList<string> Shares { get { lock (_gate) return _shares.ToList(); } }
+    public void SetShares(params string[] shares) { lock (_gate) { _shares.Clear(); _shares.AddRange(shares); } }
 
     public int Count(string path)
     {
@@ -73,6 +97,17 @@ public sealed class MockPlayer : IDisposable
 
     public void Start()
     {
+        (_listener, Port) = Bind();
+        (_settingsListener, SettingsPort) = Bind();
+        (_webListener, WebPort) = Bind();
+        var main = _listener; var settings = _settingsListener; var web = _webListener;
+        _loop = Task.Run(() => Loop(main));
+        _settingsLoop = Task.Run(() => Loop(settings));
+        _webLoop = Task.Run(() => Loop(web));
+    }
+
+    static (HttpListener, int) Bind()
+    {
         for (int attempt = 0; attempt < 8; attempt++)
         {
             var tcp = new System.Net.Sockets.TcpListener(IPAddress.Loopback, 0);
@@ -84,10 +119,7 @@ public sealed class MockPlayer : IDisposable
                 var listener = new HttpListener();
                 listener.Prefixes.Add("http://127.0.0.1:" + port + "/");
                 listener.Start();
-                _listener = listener;
-                Port = port;
-                _loop = Task.Run(Loop);
-                return;
+                return (listener, port);
             }
             catch { Thread.Sleep(20); }
         }
@@ -97,14 +129,17 @@ public sealed class MockPlayer : IDisposable
     public void Dispose()
     {
         lock (_gate) { _stop = true; Monitor.PulseAll(_gate); }
-        try { _listener?.Stop(); } catch { }
-        try { _listener?.Close(); } catch { }
-        try { _loop?.Wait(1500); } catch { }
+        foreach (var l in new[] { _listener, _settingsListener, _webListener })
+        {
+            try { l?.Stop(); } catch { }
+            try { l?.Close(); } catch { }
+        }
+        foreach (var t in new[] { _loop, _settingsLoop, _webLoop })
+            try { t?.Wait(1500); } catch { }
     }
 
-    async Task Loop()
+    async Task Loop(HttpListener? listener)
     {
-        var listener = _listener;
         if (listener == null) return;
         while (listener.IsListening)
         {
@@ -125,6 +160,12 @@ public sealed class MockPlayer : IDisposable
         var qs = Query(ctx.Request.Url?.Query);
         byte[] body;
         string type;
+        int port = ctx.Request.LocalEndPoint?.Port ?? Port;
+        if (port != Port || path == "/Settings" || ctx.Request.HttpMethod == "POST")
+        {
+            HandleShares(ctx, port, path, qs);
+            return;
+        }
         lock (_gate)
         {
             _paths.Add(path);
@@ -152,6 +193,116 @@ public sealed class MockPlayer : IDisposable
             ctx.Response.Close();
         }
         catch { }
+    }
+
+    void HandleShares(HttpListenerContext ctx, int port, string path, Dictionary<string, string> qs)
+    {
+        bool post = ctx.Request.HttpMethod == "POST";
+        string form = "";
+        if (post)
+        {
+            using var reader = new StreamReader(ctx.Request.InputStream, Encoding.UTF8);
+            form = reader.ReadToEnd();
+        }
+        int code = 200;
+        string? location = null;
+        string xml = "";
+        lock (_gate)
+        {
+            _paths.Add(post ? "POST " + path : path);
+            var f = post ? Query(form) : new Dictionary<string, string>(StringComparer.Ordinal);
+            bool formType = (ctx.Request.ContentType ?? "").Split(';')[0].Trim() == "application/x-www-form-urlencoded";
+            if (port == Port)
+            {
+                if (path == "/Settings" && !post) { code = 301; location = "http://127.0.0.1:" + SettingsPort + (ctx.Request.Url?.PathAndQuery ?? path); }
+                else if (path == "/cp/AddShare" && post && RedirectNextAdd) { RedirectNextAdd = false; code = 307; location = "/cp/AddShare2"; }
+                else if (path is "/cp/AddShare" or "/cp/AddShare2" && post) xml = AddShare(f, formType);
+                else code = 404;
+            }
+            else if (port == SettingsPort)
+            {
+                if (path == "/Settings" && !post) xml = SettingsXml(qs.GetValueOrDefault("id", ""));
+                else code = 404;
+            }
+            else if (port == WebPort)
+            {
+                if (path == "/findremoveshares" && post)
+                {
+                    if (f.GetValueOrDefault("remove") != "Remove selected shares") xml = "<error><detail>no remove button</detail></error>";
+                    else
+                    {
+                        var gone = f.Where(kv => kv.Value == "on").Select(kv => kv.Key).ToHashSet(StringComparer.Ordinal);
+                        _shares.RemoveAll(gone.Contains);
+                        code = 302; location = "/sharecfg?noheader=1";
+                    }
+                }
+                else if (path == "/sharecfg") { code = 302; location = "/settings/library/networkShares?noheader=1"; }
+                else code = 404;
+            }
+            else code = 404;
+        }
+        try
+        {
+            byte[] body = xml.Length == 0 ? [] : Encoding.UTF8.GetBytes("""<?xml version="1.0" encoding="UTF-8" standalone="yes"?>""" + "\n" + xml);
+            ctx.Response.StatusCode = code;
+            if (location != null) ctx.Response.RedirectLocation = location;
+            ctx.Response.ContentType = "text/xml; charset=utf-8";
+            ctx.Response.ContentLength64 = body.Length;
+            ctx.Response.OutputStream.Write(body, 0, body.Length);
+            ctx.Response.Close();
+        }
+        catch { }
+    }
+
+    string AddShare(Dictionary<string, string> f, bool formType)
+    {
+        LastShareContentTypeOk = formType;
+        LastShareUser = f.GetValueOrDefault("username", "");
+        LastSharePasswordLength = f.GetValueOrDefault("password", "").Length;
+        string name = f.GetValueOrDefault("sharename", "");
+        if (!System.Text.RegularExpressions.Regex.IsMatch(name, @"^\\\\(.*?)\\(.*)$"))
+            return @"<error><message>Share URL must be in the form \\computer\share</message></error>";
+        if (_shares.Any(s => string.Equals(s, name, StringComparison.OrdinalIgnoreCase)))
+            return "<error><message>Share already exists</message></error>";
+        if (FailNextAdd) { FailNextAdd = false; return "<error><message>Addshare failed</message></error>"; }
+        _shares.Add(name);
+        return "<success/>";
+    }
+
+    // Same markup as the NAD: a style block, then the form, escaped into the setting's value attribute.
+    string SharesHtml()
+    {
+        var sb = new StringBuilder("<style>\n#configshareform{font-family:inherit;color:inherit;}\n#configshareform label{cursor:pointer;flex:1;}\n</style>");
+        sb.Append("<form id=\"configshareform\" method=\"POST\" action=\"http://127.0.0.1:").Append(WebPort).Append("/findremoveshares\"><fieldset>");
+        for (int i = 0; i < _shares.Count; i++)
+        {
+            string sp = _shares[i];
+            string rest = sp.Length > 2 ? sp[2..] : sp;
+            int b = rest.IndexOf('\\');
+            string host = b < 0 ? rest : rest[..b], share = b < 0 ? "" : rest[(b + 1)..];
+            sb.Append("<div class=\"row\"><input name=\"").Append(WebUtility.HtmlEncode(sp)).Append("\" id=\"checkbox").Append(i + 1)
+              .Append("\" type=\"checkbox\" /><label for=\"checkbox").Append(i + 1).Append("\">").Append(WebUtility.HtmlEncode(share)).Append(" on ")
+              .Append(WebUtility.HtmlEncode(host)).Append(" (").Append(WebUtility.HtmlEncode(sp)).Append(")</label></div>");
+        }
+        sb.Append("</fieldset><input type=\"submit\" name=\"remove\" value=\"Remove selected shares\" /></form>");
+        return sb.ToString();
+    }
+
+    string SettingsXml(string id)
+    {
+        string addUrl = "/cp/AddShare";
+        return id switch
+        {
+            "networkShares" => "<settings pageId=\"networkShares\" schemaVersion=\"28\"><menuGroup id=\"networkShares\" displayName=\"Network Shares\" refresh=\"true\">"
+                + "<setting id=\"shares\" name=\"shares\" displayName=\"Current music shares\" class=\"html\" value=\"" + Esc(SharesHtml()).Replace("\n", "&#xA;") + "\" readonly=\"true\"></setting>"
+                + "<menuGroup id=\"addShare\" displayName=\"Add shares\" url=\"" + Esc(addUrl) + "\" class=\"form\" buttonText=\"Add share\" notification=\"Share added\" closeOnInvoke=\"true\"></menuGroup>"
+                + "</menuGroup></settings>",
+            "addShare" => "<settings pageId=\"addShare\" schemaVersion=\"28\"><menuGroup id=\"addShare\" displayName=\"Add shares\" url=\"" + Esc(addUrl) + "\" class=\"form\" buttonText=\"Add share\" notification=\"Share added\" closeOnInvoke=\"true\">"
+                + "<setting id=\"sharename\" name=\"sharename\" displayName=\"Enter share name (as \\\\ComputerName\\share)\" class=\"text\" pattern=\"^\\\\\\\\(.*?)\\\\(.*)$\" patternError=\"Share URL must be in the form \\\\computer\\share\" requiredError=\"This field is required.\" required=\"true\"></setting>"
+                + "<setting id=\"username\" name=\"username\" displayName=\"User name (if required)\" class=\"text\"></setting>"
+                + "<setting id=\"password\" name=\"password\" displayName=\"Password (if required)\" class=\"text\" style=\"password\"></setting></menuGroup></settings>",
+            _ => "<error><detail>unknown settings page</detail></error>",
+        };
     }
 
     string WaitStatus(Dictionary<string, string> qs)
@@ -307,6 +458,10 @@ public sealed class MockPlayer : IDisposable
                 return "<playlists>" + string.Concat(_saved.Keys.OrderBy(k => k, StringComparer.Ordinal).Select(k => "<name>" + Esc(k) + "</name>")) + "</playlists>";
             case "/SyncStatus":
                 return SyncXml();
+            case "/Reindex":
+                if (DateTime.UtcNow >= _indexUntil) _indexUntil = DateTime.UtcNow + IndexDuration;
+                Pulse();
+                return "<indexing>1</indexing>";
             case "/AddSlave":
             case "/RemoveSlave":
                 return Group(path, qs);
@@ -528,7 +683,7 @@ public sealed class MockPlayer : IDisposable
         return "<status etag=\"" + Etag() + "\"><state>" + _state + "</state><pid>" + _pid + "</pid><song>" + _song
             + "</song><title1>" + Esc(song?.Title ?? "") + "</title1><title2>" + Esc(song?.Artist ?? "") + "</title2><title3>" + Esc(song?.Album ?? "")
             + "</title3><volume>" + _volume + "</volume><db>" + Db + "</db><secs>" + Secs() + "</secs><totlen>200</totlen>"
-            + "<streamFormat>FLAC 16/44.1</streamFormat><shuffle>" + _shuffle + "</shuffle><repeat>" + _repeat + "</repeat><mute>" + _mute
+            + "<indexing>" + (DateTime.UtcNow < _indexUntil ? 1 : 0) + "</indexing><streamFormat>FLAC 16/44.1</streamFormat><shuffle>" + _shuffle + "</shuffle><repeat>" + _repeat + "</repeat><mute>" + _mute
             + "</mute><sleep>" + (_sleep == 0 ? "" : _sleep.ToString()) + "</sleep><fn>" + Esc(song?.File ?? "")
             + "</fn><service>LocalMusic</service><image>/Artwork?service=LocalMusic</image></status>";
     }

@@ -29,6 +29,7 @@ static class Program
         SleepTests.Run();
         DiscoveryTests.Run();
         GroupTests.Run();
+        NetworkShareTests.Run();
         if (TestHarness.Failed != 0)
         {
             Console.WriteLine(TestHarness.Failed + " failed");

@@ -194,7 +194,7 @@ public static class BluOsXml
         throw new BluOsException(detail.Length == 0 ? "error" : detail);
     }
 
-    static XElement Load(string xml)
+    internal static XElement Load(string xml)
     {
         if (string.IsNullOrWhiteSpace(xml)) throw new BluOsException("empty response");
         try

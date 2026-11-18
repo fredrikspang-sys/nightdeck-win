@@ -82,4 +82,25 @@ public interface IBluOsClient : IAsyncDisposable
 
     /// <summary>GET /RemoveSlave?slave=IP&amp;port=PORT. &lt;error&gt; throws BluOsException.</summary>
     Task RemoveSlaveAsync(string host, int port, CancellationToken ct = default);
+
+    /// <summary>GET /Reindex: the player rescans its music library. /Status shows indexing while it runs.</summary>
+    Task ReindexAsync(CancellationToken ct = default);
+
+    /// <summary>
+    /// Network shares the player indexes, from Settings?id=networkShares (undocumented; port 11000
+    /// redirects to the settings port). Credentials are never returned by the player.
+    /// </summary>
+    Task<SharesPage> GetNetworkSharesAsync(CancellationToken ct = default);
+
+    /// <summary>Field names, URL and path pattern of the player's Add share form (Settings?id=addShare).</summary>
+    Task<AddShareForm> GetAddShareFormAsync(CancellationToken ct = default);
+
+    /// <summary>
+    /// POSTs the Add share form. The player sends the password to the share in clear text on the LAN;
+    /// Nightdeck never stores or logs it. &lt;error&gt; in the reply throws BluOsException.
+    /// </summary>
+    Task AddNetworkShareAsync(AddShareForm form, string sharePath, string user, string password, CancellationToken ct = default);
+
+    /// <summary>POSTs the remove form (PATH=on for each share plus the submit field) to the page's form action.</summary>
+    Task RemoveNetworkSharesAsync(SharesPage page, IEnumerable<string> sharePaths, CancellationToken ct = default);
 }

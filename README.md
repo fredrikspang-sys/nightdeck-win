@@ -38,6 +38,8 @@ That publishes a framework-dependent single-file build to `out\Nightdeck.exe`.
 
 There is no default player. Set a host in Settings, or open the player list and choose Discover (mDNS `_musc._tcp`, then `_musp._tcp`, then `_musz._tcp`). The mDNS query goes out on every LAN adapter, so a VPN adapter such as Tailscale or ZeroTier does not swallow it. When mDNS finds nothing, Nightdeck checks port 11000 on the local /24 of each adapter that has a gateway and confirms a player with one read-only `GET /SyncStatus`. The port is 11000 unless you change it. Settings are stored in `%AppData%\Nightdeck\config` (`Host`, `Port`, and a few options).
 
+Settings → Music library lists the network shares (SMB folders on a NAS or PC) that the player indexes. You can add a share (`\\server\share`, user name, password), remove shares, and start a reindex there; Nightdeck asks before it removes a share or reindexes. BluOS sends share passwords unencrypted on the local network. Nightdeck does not store them.
+
 The player button in the header lists players and shows which room is the group master. Add a slave from that list. Use the group line on Now playing to leave a group.
 
 The volume fader sits under the cover. It sends a level when you release it. Stop ends playback. Sleep starts the player timer; if the player keeps playing when that timer hits zero, Nightdeck fades the volume and then pauses (or stops, if that option is on).

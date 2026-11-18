@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using System.Globalization;
 using System.Windows;
 using System.Windows.Controls;
@@ -9,6 +10,9 @@ namespace Nightdeck;
 public partial class SettingsView : UserControl
 {
     PlayerSession? _session;
+    SharesPage? _shares;
+    bool _sharesLoaded, _sharesBusy;
+    int _sharesGen;
 
     public SettingsView() => InitializeComponent();
 
@@ -23,6 +27,166 @@ public partial class SettingsView : UserControl
         EndStopBox.IsChecked = s.SleepEndStop;
         TrayBox.IsChecked = s.ShowTray;
         DbBox.Text = s.DbOffset.ToString("0.##", CultureInfo.InvariantCulture);
+        session.Changed += (_, _) => UpdateShareControls();
+        session.EndpointChanged += (_, _) =>
+        {
+            _sharesLoaded = false;
+            _shares = null;
+            SharesList.ItemsSource = null;
+            HideAddPanel();
+            EnsureSharesLoaded();
+        };
+        IsVisibleChanged += (_, _) => EnsureSharesLoaded();
+        UpdateShareControls();
+    }
+
+    // ---- music library: network shares (Settings?id=networkShares on the player) and reindex
+
+    sealed class ShareRow(NetworkShare share) : INotifyPropertyChanged
+    {
+        bool _selected;
+        public string Path => share.Path;
+        public string Label => share.Label;
+        public bool Selected
+        {
+            get => _selected;
+            set { _selected = value; PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(Selected))); }
+        }
+        public event PropertyChangedEventHandler? PropertyChanged;
+    }
+
+    bool HasPlayer => _session != null && !string.IsNullOrWhiteSpace(_session.Client.Host);
+
+    void EnsureSharesLoaded()
+    {
+        if (_sharesLoaded || !IsVisible || !HasPlayer) return;
+        _sharesLoaded = true;
+        _ = ReloadSharesAsync();
+    }
+
+    void UpdateShareControls()
+    {
+        bool ok = HasPlayer && _session!.Connected && !_sharesBusy;
+        RefreshSharesBtn.IsEnabled = HasPlayer && !_sharesBusy;
+        RemoveSharesBtn.IsEnabled = ok && _shares is { Shares.Count: > 0 };
+        AddShareBtn.IsEnabled = ok;
+        AddConfirmBtn.IsEnabled = ok;
+        bool indexing = _session is { Connected: true, Status.Indexing: > 0 };
+        ReindexBtn.IsEnabled = ok && !indexing;
+        IndexingPanel.Visibility = indexing ? Visibility.Visible : Visibility.Collapsed;
+        SharesEmpty.Visibility = _shares is { Shares.Count: 0 } ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    async Task ReloadSharesAsync()
+    {
+        if (_session == null || !HasPlayer) return;
+        int gen = ++_sharesGen;
+        _sharesBusy = true;
+        UpdateShareControls();
+        SharesInfo.Text = "Loading shares…";
+        try
+        {
+            var page = await _session.Client.GetNetworkSharesAsync();
+            if (gen != _sharesGen) return;
+            _shares = page;
+            SharesList.ItemsSource = page.Shares.Select(sh => new ShareRow(sh)).ToList();
+            SharesInfo.Text = "";
+        }
+        catch (Exception ex)
+        {
+            if (gen != _sharesGen) return;
+            SharesInfo.Text = "Could not read the shares: " + ex.Message;
+            _sharesLoaded = false;
+        }
+        finally
+        {
+            if (gen == _sharesGen) { _sharesBusy = false; UpdateShareControls(); }
+        }
+    }
+
+    void RefreshShares_Click(object sender, RoutedEventArgs e) { _sharesLoaded = true; _ = ReloadSharesAsync(); }
+
+    async void RemoveShares_Click(object sender, RoutedEventArgs e)
+    {
+        if (_session == null || _shares == null) return;
+        var rows = (SharesList.ItemsSource as IEnumerable<ShareRow>)?.Where(r => r.Selected).ToList() ?? [];
+        if (rows.Count == 0 && SharesList.SelectedItem is ShareRow current) rows.Add(current);
+        if (rows.Count == 0) { SharesInfo.Text = "Tick the shares to remove first."; return; }
+        string list = string.Join("\n", rows.Select(r => r.Path));
+        string q = rows.Count == 1
+            ? "Remove this share from the player?\n\n" + list + "\n\nThe player stops indexing music from it."
+            : "Remove these " + rows.Count + " shares from the player?\n\n" + list + "\n\nThe player stops indexing music from them.";
+        if (MessageBox.Show(Window.GetWindow(this), q, "Nightdeck", MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes) return;
+        _sharesBusy = true;
+        UpdateShareControls();
+        try
+        {
+            await _session.Client.RemoveNetworkSharesAsync(_shares, rows.Select(r => r.Path));
+            _sharesBusy = false;
+            await ReloadSharesAsync();
+            SharesInfo.Text = rows.Count == 1 ? "Share removed. Reindex to update the library." : rows.Count + " shares removed. Reindex to update the library.";
+        }
+        catch (Exception ex) { SharesInfo.Text = "Could not remove: " + ex.Message; }
+        finally { _sharesBusy = false; UpdateShareControls(); }
+    }
+
+    void AddShare_Click(object sender, RoutedEventArgs e)
+    {
+        AddPanel.Visibility = Visibility.Visible;
+        AddError.Visibility = Visibility.Collapsed;
+        SharePathBox.Focus();
+    }
+
+    void AddCancel_Click(object sender, RoutedEventArgs e) => HideAddPanel();
+
+    void HideAddPanel()
+    {
+        AddPanel.Visibility = Visibility.Collapsed;
+        SharePathBox.Text = "";
+        ShareUserBox.Text = "";
+        SharePassBox.Clear();
+        AddError.Visibility = Visibility.Collapsed;
+    }
+
+    async void AddConfirm_Click(object sender, RoutedEventArgs e)
+    {
+        if (_session == null) return;
+        _sharesBusy = true;
+        UpdateShareControls();
+        AddError.Visibility = Visibility.Collapsed;
+        try
+        {
+            var form = await _session.Client.GetAddShareFormAsync();
+            string? path = form.Normalize(SharePathBox.Text);
+            if (path == null) { ShowAddError(form.PatternError); return; }
+            await _session.Client.AddNetworkShareAsync(form, path, ShareUserBox.Text.Trim(), SharePassBox.Password);
+            HideAddPanel();
+            _sharesBusy = false;
+            await ReloadSharesAsync();
+            SharesInfo.Text = "Share added: " + path + ". Reindex to scan it.";
+        }
+        catch (Exception ex) { ShowAddError("Could not add the share: " + ex.Message); }
+        finally { _sharesBusy = false; UpdateShareControls(); }
+    }
+
+    void ShowAddError(string text)
+    {
+        AddError.Text = text;
+        AddError.Visibility = Visibility.Visible;
+    }
+
+    async void Reindex_Click(object sender, RoutedEventArgs e)
+    {
+        if (_session == null) return;
+        if (MessageBox.Show(Window.GetWindow(this), "Reindex the player's music library?\n\nThe player rescans all shares and attached storage. This can take a while on a large library.",
+                "Nightdeck", MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes) return;
+        try
+        {
+            await _session.Client.ReindexAsync();
+            SharesInfo.Text = "Reindex started.";
+            IndexingPanel.Visibility = Visibility.Visible;
+        }
+        catch (Exception ex) { SharesInfo.Text = "Could not start the reindex: " + ex.Message; }
     }
 
     void Found_Click(object sender, MouseButtonEventArgs e)
