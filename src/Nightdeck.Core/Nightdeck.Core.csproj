@@ -1,0 +1,7 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <RootNamespace>Nightdeck.Core</RootNamespace>
+    <AssemblyName>Nightdeck.Core</AssemblyName>
+  </PropertyGroup>
+</Project>

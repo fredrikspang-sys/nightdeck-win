@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net9.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <RootNamespace>Nightdeck</RootNamespace>
+    <AssemblyName>Nightdeck</AssemblyName>
+    <Version>1.0.0</Version>
+    <Product>Nightdeck</Product>
+    <Copyright>Copyright (c) 2026 Fredrik Spång</Copyright>
+    <ApplicationTitle>Nightdeck</ApplicationTitle>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Nightdeck.Core\Nightdeck.Core.csproj" />
+  </ItemGroup>
+</Project>

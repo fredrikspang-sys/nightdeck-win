@@ -1,0 +1,124 @@
+<Window x:Class="Nightdeck.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="clr-namespace:Nightdeck"
+        Title="Nightdeck" Height="740" Width="1120" MinHeight="600" MinWidth="900"
+        WindowStartupLocation="CenterScreen" Background="{StaticResource BgBrush}">
+  <DockPanel>
+    <Border DockPanel.Dock="Top" Background="{StaticResource SurfaceBrush}" BorderBrush="{StaticResource LineBrush}" BorderThickness="0,0,0,1" Padding="16,10">
+      <Grid>
+        <Grid.ColumnDefinitions>
+          <ColumnDefinition Width="Auto"/>
+          <ColumnDefinition Width="*"/>
+        </Grid.ColumnDefinitions>
+        <TextBlock Grid.Column="0" Text="Nightdeck" FontSize="18" FontWeight="SemiBold" VerticalAlignment="Center"/>
+        <Grid Grid.Column="1" Margin="16,0,0,0">
+          <Button x:Name="PlayerButton" Click="PlayerButton_Click" HorizontalAlignment="Right" VerticalAlignment="Center"
+                  HorizontalContentAlignment="Stretch" Background="Transparent" BorderThickness="0" Padding="8,4" Margin="0"
+                  ToolTip="Players" AutomationProperties.Name="Players">
+            <Button.Template>
+              <ControlTemplate TargetType="Button">
+                <Border x:Name="Bd" Background="{TemplateBinding Background}" Padding="{TemplateBinding Padding}" CornerRadius="4">
+                  <ContentPresenter HorizontalAlignment="Stretch" VerticalAlignment="Center"/>
+                </Border>
+                <ControlTemplate.Triggers>
+                  <Trigger Property="IsMouseOver" Value="True">
+                    <Setter TargetName="Bd" Property="Background" Value="{StaticResource HoverBrush}"/>
+                  </Trigger>
+                  <Trigger Property="IsPressed" Value="True">
+                    <Setter TargetName="Bd" Property="Background" Value="{StaticResource SelectBrush}"/>
+                  </Trigger>
+                  <Trigger Property="IsEnabled" Value="False">
+                    <Setter Property="Opacity" Value="0.45"/>
+                  </Trigger>
+                </ControlTemplate.Triggers>
+              </ControlTemplate>
+            </Button.Template>
+            <DockPanel>
+              <TextBlock DockPanel.Dock="Right" Text="&#xE70D;" FontFamily="Segoe MDL2 Assets" FontSize="10" Margin="8,0,0,0"
+                         Foreground="{StaticResource MutedBrush}" VerticalAlignment="Center"/>
+              <TextBlock x:Name="Conn" TextTrimming="CharacterEllipsis" TextAlignment="Right"
+                         Foreground="{StaticResource MutedBrush}" VerticalAlignment="Center"/>
+            </DockPanel>
+          </Button>
+          <Popup x:Name="PlayerPopup" PlacementTarget="{Binding ElementName=PlayerButton}" Placement="Bottom"
+                 StaysOpen="False" AllowsTransparency="True">
+            <Border x:Name="PickerCard" Background="{StaticResource SurfaceBrush}" BorderBrush="{StaticResource LineBrush}"
+                    BorderThickness="1" Padding="10" Width="380">
+              <Border.Resources>
+                <Style x:Key="RowButton" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+                  <Setter Property="Background" Value="Transparent"/>
+                  <Setter Property="BorderThickness" Value="0"/>
+                  <Setter Property="Padding" Value="8,6"/>
+                  <Setter Property="Margin" Value="0,1,4,1"/>
+                  <Setter Property="HorizontalContentAlignment" Value="Left"/>
+                  <Setter Property="Template">
+                    <Setter.Value>
+                      <ControlTemplate TargetType="Button">
+                        <Border Background="{TemplateBinding Background}" Padding="{TemplateBinding Padding}" CornerRadius="4">
+                          <ContentPresenter HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                          <Trigger Property="IsMouseOver" Value="True">
+                            <Setter Property="Background" Value="{StaticResource HoverBrush}"/>
+                          </Trigger>
+                          <Trigger Property="IsEnabled" Value="False">
+                            <Setter Property="Opacity" Value="0.55"/>
+                          </Trigger>
+                        </ControlTemplate.Triggers>
+                      </ControlTemplate>
+                    </Setter.Value>
+                  </Setter>
+                </Style>
+              </Border.Resources>
+              <DockPanel>
+                <TextBlock x:Name="PickerInfo" DockPanel.Dock="Bottom" Margin="0,8,0,0"
+                           Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap"/>
+                <DockPanel DockPanel.Dock="Bottom" Margin="0,8,0,0">
+                  <Button x:Name="AddManualBtn" DockPanel.Dock="Right" Content="Add" Margin="8,0,0,0"
+                          Click="AddManual_Click" AutomationProperties.Name="Add"/>
+                  <TextBox x:Name="ManualBox" AutomationProperties.Name="Add player" ToolTip="host or host:port"/>
+                </DockPanel>
+                <ScrollViewer VerticalScrollBarVisibility="Auto" MaxHeight="320">
+                  <StackPanel x:Name="PlayerRows"/>
+                </ScrollViewer>
+              </DockPanel>
+            </Border>
+          </Popup>
+        </Grid>
+      </Grid>
+    </Border>
+    <TextBlock x:Name="StatusLine" DockPanel.Dock="Bottom" Margin="16,8" Foreground="{StaticResource MutedBrush}" TextTrimming="CharacterEllipsis"/>
+    <Grid>
+      <Grid.ColumnDefinitions>
+        <ColumnDefinition Width="520"/>
+        <ColumnDefinition Width="*"/>
+      </Grid.ColumnDefinitions>
+      <Border Grid.Column="0" BorderBrush="{StaticResource LineBrush}" BorderThickness="0,0,1,0" Padding="18,16">
+        <local:NowPlayingView x:Name="Now"/>
+      </Border>
+      <TabControl Grid.Column="1" Margin="12,8,12,8">
+        <TabItem Header="Library">
+          <local:LibraryView x:Name="Library"/>
+        </TabItem>
+        <TabItem Header="Queue">
+          <local:QueueView x:Name="Queue"/>
+        </TabItem>
+        <TabItem Header="Playlists">
+          <local:PlaylistsView x:Name="Playlists"/>
+        </TabItem>
+        <TabItem ToolTip="Settings" AutomationProperties.Name="Settings">
+          <TabItem.Header>
+            <StackPanel Orientation="Horizontal">
+              <TextBlock FontFamily="Segoe MDL2 Assets" FontSize="14" Text="&#xE713;" VerticalAlignment="Center" Margin="0,0,8,0"
+                         Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=TabItem}}"/>
+              <TextBlock Text="Settings" VerticalAlignment="Center"
+                         Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=TabItem}}"/>
+            </StackPanel>
+          </TabItem.Header>
+          <local:SettingsView x:Name="Settings"/>
+        </TabItem>
+      </TabControl>
+    </Grid>
+  </DockPanel>
+</Window>

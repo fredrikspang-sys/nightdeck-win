@@ -1,0 +1,13 @@
+reference-bluplay/
+bin/
+obj/
+out/
+.vs/
+*.user
+TestResults/
+*TASK.md
+
+# lab notes (kept local)
+REVIEW*.md
+REPORT.md
+PRINCIPLES.md
