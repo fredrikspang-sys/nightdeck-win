@@ -140,13 +140,27 @@ public static class SubnetScan
     }
 }
 
-/// <summary>mDNS first; when it finds nothing, the /24 SyncStatus scan.</summary>
+/// <summary>mDNS and LSDP together; when both find nothing, the /24 SyncStatus scan.</summary>
 public static class PlayerDiscovery
 {
     public static async Task<IReadOnlyList<DiscoveredPlayer>> DiscoverAsync(TimeSpan mdnsTimeout, bool scanFallback = true, CancellationToken ct = default)
     {
-        var found = await MdnsDiscovery.DiscoverAsync(mdnsTimeout, ct).ConfigureAwait(false);
+        var mdnsTask = MdnsDiscovery.DiscoverAsync(mdnsTimeout, ct);
+        var lsdpTask = LsdpDiscovery.DiscoverAsync(mdnsTimeout, ct);
+        await Task.WhenAll(mdnsTask, lsdpTask).ConfigureAwait(false);
+        var found = Merge(mdnsTask.Result, lsdpTask.Result);
         if (found.Count > 0 || !scanFallback || ct.IsCancellationRequested) return found;
         return await SubnetScan.DiscoverAsync(ct).ConfigureAwait(false);
+    }
+
+    public static List<DiscoveredPlayer> Merge(IEnumerable<DiscoveredPlayer> mdns, IEnumerable<DiscoveredPlayer> lsdp)
+    {
+        var list = new List<DiscoveredPlayer>();
+        foreach (var p in mdns.Concat(lsdp))
+        {
+            if (list.Count >= 16) break;
+            if (!list.Any(h => h.Host == p.Host && h.Port == p.Port)) list.Add(p);
+        }
+        return list;
     }
 }

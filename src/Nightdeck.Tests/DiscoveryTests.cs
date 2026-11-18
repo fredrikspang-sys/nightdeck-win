@@ -58,6 +58,8 @@ static class DiscoveryTests
         InterfaceRules();
         UnicastResponder();
         ScanMock().GetAwaiter().GetResult();
+        LsdpParse();
+        LsdpUnicastResponder();
     }
 
     static void InterfaceRules()
@@ -96,7 +98,9 @@ static class DiscoveryTests
             return asksMusc;
         });
         string? old = Environment.GetEnvironmentVariable("NIGHTDECK_MDNS_ADDR");
+        string? oldLsdp = Environment.GetEnvironmentVariable("NIGHTDECK_LSDP_ADDR");
         Environment.SetEnvironmentVariable("NIGHTDECK_MDNS_ADDR", "127.0.0.1:" + port);
+        Environment.SetEnvironmentVariable("NIGHTDECK_LSDP_ADDR", "127.0.0.1:1");
         try
         {
             var found = PlayerDiscovery.DiscoverAsync(TimeSpan.FromMilliseconds(800), scanFallback: false).GetAwaiter().GetResult();
@@ -108,7 +112,11 @@ static class DiscoveryTests
                 TestHarness.Equal(found[0].Host, "192.0.2.10", "unicast responder A record");
             }
         }
-        finally { Environment.SetEnvironmentVariable("NIGHTDECK_MDNS_ADDR", old); }
+        finally
+        {
+            Environment.SetEnvironmentVariable("NIGHTDECK_MDNS_ADDR", old);
+            Environment.SetEnvironmentVariable("NIGHTDECK_LSDP_ADDR", oldLsdp);
+        }
     }
 
     static async Task ScanMock()
@@ -307,5 +315,82 @@ static class DiscoveryTests
             b.AddRange(raw);
         }
         b.Add(0);
+    }
+    static readonly byte[] SealplayerAnnounce =
+    [
+        0x06, 0x4C, 0x53, 0x44, 0x50, 0x01, 0x6A, 0x41, 0x06, 0x90, 0x56, 0x82, 0x0E, 0x1B,
+        0x00, 0x04, 0x0A, 0x00, 0x01, 0x24, 0x02, 0x00, 0x01, 0x05, 0x04, 0x6E, 0x61, 0x6D,
+        0x65, 0x0A, 0x53, 0x45, 0x41, 0x4C, 0x50, 0x4C, 0x41, 0x59, 0x45, 0x52, 0x04, 0x70,
+        0x6F, 0x72, 0x74, 0x05, 0x31, 0x31, 0x30, 0x30, 0x30, 0x05, 0x6D, 0x6F, 0x64, 0x65,
+        0x6C, 0x04, 0x43, 0x33, 0x38, 0x38, 0x07, 0x76, 0x65, 0x72, 0x73, 0x69, 0x6F, 0x6E,
+        0x06, 0x33, 0x2E, 0x31, 0x36, 0x2E, 0x35, 0x02, 0x7A, 0x73, 0x01, 0x30, 0x00, 0x04,
+        0x02, 0x04, 0x6E, 0x61, 0x6D, 0x65, 0x0A, 0x53, 0x45, 0x41, 0x4C, 0x50, 0x4C, 0x41,
+        0x59, 0x45, 0x52, 0x04, 0x70, 0x6F, 0x72, 0x74, 0x05, 0x31, 0x31, 0x34, 0x33, 0x31,
+    ];
+
+    static void LsdpParse()
+    {
+        TestHarness.Equal(LsdpDiscovery.Parse([], "192.0.2.1") == null, true, "lsdp empty packet");
+        TestHarness.Equal(LsdpDiscovery.Parse([0x06, (byte)'M', (byte)'S', (byte)'D', (byte)'P', 0x01, 0x05, 0x51, 0x01, 0xFF, 0xFF], "192.0.2.1") == null, true, "lsdp bad magic");
+        TestHarness.Equal(LsdpDiscovery.Parse([0x06, (byte)'L', (byte)'S', (byte)'D', (byte)'P', 0x01, 0x05, 0x51, 0x01, 0xFF, 0xFF], "192.0.2.1") == null, true, "lsdp query is not an announce");
+
+        var found = LsdpDiscovery.Parse(SealplayerAnnounce, "198.51.100.9");
+        TestHarness.Check(found != null, "lsdp captured announce");
+        if (found != null)
+        {
+            TestHarness.Equal(found.Name, "SEALPLAYER", "lsdp name");
+            TestHarness.Equal(found.Host, "10.0.1.36", "lsdp address in the packet");
+            TestHarness.Equal(found.Port, 11000, "lsdp API port, not the testing port");
+            TestHarness.Equal(found.Service, "lsdp", "lsdp service tag");
+        }
+
+        var zeroed = (byte[])SealplayerAnnounce.Clone();
+        zeroed[16] = 0; zeroed[17] = 0; zeroed[18] = 0; zeroed[19] = 0;
+        var fallback = LsdpDiscovery.Parse(zeroed, "198.51.100.9");
+        TestHarness.Equal(fallback?.Host, "198.51.100.9", "lsdp uses the source when the address is zero");
+
+        var merged = PlayerDiscovery.Merge(
+            [new DiscoveredPlayer { Name = "Den", Host = "192.0.2.10", Port = 11000, Service = "_musc" }],
+            [
+                new DiscoveredPlayer { Name = "Other", Host = "192.0.2.10", Port = 11000, Service = "lsdp" },
+                new DiscoveredPlayer { Name = "Hall", Host = "192.0.2.11", Port = 11000, Service = "lsdp" },
+            ]);
+        TestHarness.Equal(merged.Count, 2, "merge drops the duplicate host:port");
+        TestHarness.Equal(merged[0].Name, "Den", "merge keeps the mDNS name");
+        TestHarness.Equal(merged[1].Name, "Hall", "merge keeps the LSDP-only player");
+
+        var none = LsdpDiscovery.DiscoverAsync(TimeSpan.Zero).GetAwaiter().GetResult();
+        TestHarness.Equal(none.Count, 0, "lsdp zero timeout skips the network");
+    }
+
+    static void LsdpUnicastResponder()
+    {
+        using var fake = new Socket(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
+        fake.Bind(new IPEndPoint(IPAddress.Loopback, 0));
+        int port = ((IPEndPoint)fake.LocalEndPoint!).Port;
+        var responder = Task.Run(() =>
+        {
+            var buf = new byte[2048];
+            EndPoint from = new IPEndPoint(IPAddress.Any, 0);
+            if (!fake.Poll(3_000_000, SelectMode.SelectRead)) return false;
+            int n = fake.ReceiveFrom(buf, ref from);
+            bool query = n >= 11 && buf[1] == (byte)'L' && buf[7] == 0x51;
+            fake.SendTo(SealplayerAnnounce, from);
+            return query;
+        });
+        string? old = Environment.GetEnvironmentVariable("NIGHTDECK_LSDP_ADDR");
+        Environment.SetEnvironmentVariable("NIGHTDECK_LSDP_ADDR", "127.0.0.1:" + port);
+        try
+        {
+            var found = LsdpDiscovery.DiscoverAsync(TimeSpan.FromMilliseconds(800)).GetAwaiter().GetResult();
+            TestHarness.Check(responder.GetAwaiter().GetResult(), "lsdp query is version-1 query-all");
+            TestHarness.Equal(found.Count, 1, "lsdp unicast responder found");
+            if (found.Count == 1)
+            {
+                TestHarness.Equal(found[0].Name, "SEALPLAYER", "lsdp unicast name");
+                TestHarness.Equal(found[0].Host, "10.0.1.36", "lsdp unicast address");
+            }
+        }
+        finally { Environment.SetEnvironmentVariable("NIGHTDECK_LSDP_ADDR", old); }
     }
 }
