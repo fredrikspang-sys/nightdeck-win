@@ -20,7 +20,7 @@ public sealed class BluOsClient : IBluOsClient
             PooledConnectionLifetime = TimeSpan.FromMinutes(2),
         };
         _http = new HttpClient(_handler) { Timeout = Timeout.InfiniteTimeSpan };
-        _http.DefaultRequestHeaders.UserAgent.ParseAdd("Nightdeck/1.0.0");
+        _http.DefaultRequestHeaders.UserAgent.ParseAdd("Nightdeck/1.1.0");
         // Settings pages and share forms: redirects are handled by hand so a POST is never turned into a GET.
         _settingsHandler = new SocketsHttpHandler
         {
@@ -29,7 +29,7 @@ public sealed class BluOsClient : IBluOsClient
             AllowAutoRedirect = false,
         };
         _settingsHttp = new HttpClient(_settingsHandler) { Timeout = Timeout.InfiniteTimeSpan };
-        _settingsHttp.DefaultRequestHeaders.UserAgent.ParseAdd("Nightdeck/1.0.0");
+        _settingsHttp.DefaultRequestHeaders.UserAgent.ParseAdd("Nightdeck/1.1.0");
         SetEndpoint(host, port);
     }
 
