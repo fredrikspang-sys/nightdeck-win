@@ -6,6 +6,10 @@ The goal is a small footprint and simplicity. The exe is about 376 KB, and the r
 
 Nightdeck is not affiliated with BluOS, Lenbrook, or Bluesound.
 
+## Screenshots
+
+![Now playing and queue](docs/now-playing.png)
+
 ## Download
 
 Download `Nightdeck-1.0.0-win-x64.zip` from [Releases](https://github.com/fredrikspang-sys/nightdeck-win/releases), unzip it and run `Nightdeck.exe`. It needs the [.NET 9 Desktop Runtime (x64)](https://dotnet.microsoft.com/download/dotnet/9.0).
@@ -41,7 +45,3 @@ The volume fader sits under the cover. It sends a level when you release it. Sto
 Closing the window hides it when the tray icon is on. Right-click the tray icon and choose Exit to quit. Left-click the icon to show the window again.
 
 Space controls play and pause while the window is focused and a text box or button does not have the key. Key repeat is ignored. Keyboard media keys go to the Windows media overlay, which is a small COM caller. If the overlay cannot be created, those keys control transport while the window is focused.
-
-## Screenshots
-
-![Now playing and queue](docs/now-playing.png)
