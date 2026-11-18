@@ -45,11 +45,3 @@ Space controls play and pause while the window is focused and a text box or butt
 ## Screenshots
 
 ![Now playing and queue](docs/now-playing.png)
-
-## Tests
-
-The tests talk to an in-process mock player. They do not touch a player on the network.
-
-```powershell
-dotnet run --project src\Nightdeck.Tests -c Release
-```
