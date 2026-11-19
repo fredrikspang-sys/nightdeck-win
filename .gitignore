@@ -11,3 +11,6 @@ TestResults/
 REVIEW*.md
 REPORT.md
 PRINCIPLES.md
+
+# Inno Setup compiler output
+installer/Output/
