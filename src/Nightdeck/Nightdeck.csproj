@@ -8,7 +8,7 @@
     <AssemblyName>Nightdeck</AssemblyName>
     <Version>1.1.0</Version>
     <Product>Nightdeck</Product>
-    <Copyright>Copyright (c) 2026 Fredrik Spång</Copyright>
+    <Copyright>Copyright (c) 2026 fredrikspang-sys</Copyright>
     <ApplicationTitle>Nightdeck</ApplicationTitle>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <SatelliteResourceLanguages>en</SatelliteResourceLanguages>

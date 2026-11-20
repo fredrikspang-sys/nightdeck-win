@@ -5,7 +5,7 @@
   #define MyAppVersion "1.1.0"
 #endif
 #define MyAppName "Nightdeck"
-#define MyAppPublisher "Fredrik Spång"
+#define MyAppPublisher "fredrikspang-sys"
 #define MyAppURL "https://github.com/fredrikspang-sys/nightdeck-win"
 #define MyAppExeName "Nightdeck.exe"
 #define MyAppId "{{885EB0EC-B8FF-47EF-BEBA-8FA59EA01DB7}"
