@@ -42,8 +42,6 @@ Settings → Music library lists the network shares (SMB folders on a NAS or PC)
 
 The player button in the header lists players and shows which room is the group master. Add a slave from that list. Use the group line on Now playing to leave a group.
 
-The volume fader sits under the cover. It sends a level when you release it. Stop ends playback. Sleep starts the player timer; if the player keeps playing when that timer hits zero, Nightdeck fades the volume and then pauses (or stops, if that option is on).
+When the sleep timer ends and the player is still playing, Nightdeck fades the volume and then pauses (or stops, if that option is on).
 
-Closing the window hides it when the tray icon is on. Right-click the tray icon and choose Exit to quit. Left-click the icon to show the window again.
-
-Space controls play and pause while the window is focused and a text box or button does not have the key. Key repeat is ignored. Keyboard media keys go to the Windows media overlay, which is a small COM caller. If the overlay cannot be created, those keys control transport while the window is focused.
+With the tray icon on, closing the window hides it. Choose Exit from the tray menu to quit.
